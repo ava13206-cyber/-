@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>台灣小孩過馬路模擬器 (Taiwan Survival Crossing)</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', sans-serif;
+            background-color: #222;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #game-wrapper {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0,0,0,0.7);
+        }
+        canvas {
+            background-color: #444; /* 柏油路 */
+            display: block;
+            border-radius: 4px;
+        }
+        /* UI 介面層 */
+        .ui-overlay {
+            position: absolute;
+            pointer-events: none;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .status-bar {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .light-signal {
+            padding: 5px 10px;
+            border-radius: 4px;
+            text-shadow: 1px 1px 2px black;
+        }
+        .red-light { background-color: #d32f2f; color: white; box-shadow: 0 0 10px #d32f2f; }
+        .green-light { background-color: #388e3c; color: white; box-shadow: 0 0 10px #388e3c; }
+        .yellow-light { background-color: #fbc02d; color: black; box-shadow: 0 0 10px #fbc02d; }
+
+        /* 警告訊息 */
+        #warning-text {
+            text-align: center;
+            font-size: 24px;
+            color: #ffeb3b;
+            font-weight: bold;
+            text-shadow: 2px 2px 0px #000;
+            display: none;
+            animation: pulse 0.8s infinite;
+        }
+        @keyframes pulse { 50% { opacity: 0.5; transform: scale(0.95); } }
+
+        /* 遊戲結束/開始選單 */
+        #menu-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(20, 20, 20, 0.95);
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            border: 2px solid #fff;
+            pointer-events: auto;
+            max-width: 80%;
+        }
+        h1 { margin: 0 0 10px 0; font-size: 24px; color: #4fc3f7; }
+        p { font-size: 16px; line-height: 1.6; color: #ccc; }
+        .highlight { color: #ffeb3b; font-weight: bold; }
+        button {
+            margin-top: 20px;
+            padding: 12px 30px;
+            font-size: 20px;
+            cursor: pointer;
+            background: #ff5722;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.95); }
+
+        /* 手機控制板 */
+        #mobile-controls {
+            display: none;
+            width: 100%;
+            height: 120px;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            pointer-events: auto;
+        }
+        .d-pad {
+            width: 120px;
+            height: 120px;
+            position: relative;
+            margin: 0 auto;
+        }
+        .btn {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 50%;
+        }
+        .btn-up { top: 0; left: 40px; }
+        .btn-down { bottom: 0; left: 40px; }
+        .btn-left { top: 40px; left: 0; }
+        .btn-right { top: 40px; right: 0; }
+        
+        @media (max-width: 768px) {
+            #mobile-controls { display: block; }
+            .info-text { display: none; } /* 手機隱藏說明文字以省空間 */
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-wrapper">
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+        
+        <div class="ui-overlay">
+            <div class="status-bar">
+                <div id="signal-box" class="light-signal red-light">🔴 紅燈 (等待)</div>
+                <div>⏱️ <span id="timer">0</span>s</div>
+            </div>
+            <div id="warning-text">⚠️ 注意轉彎車！(A柱死角)</div>
+        </div>
+
+        <div id="menu-modal">
+            <h1 id="menu-title">🚸 台灣小孩過馬路</h1>
+            <div id="menu-content">
+                <p>模擬 6 歲兒童視角 (身高115cm)。<br>
+                <span class="highlight">特點：走得慢、駕駛看不到你。</span></p>
+                <p style="text-align:left; font-size:14px; background:#333; padding:10px; border-radius:5px;">
+                    🚦 <b>紅燈</b>：左右直行車流（絕對不能走）<br>
+                    🟢 <b>綠燈</b>：直行車停，但會有<b>轉彎車</b>與<b>鑽車縫機車</b><br>
+                    🏃 <b>操作</b>：鍵盤上下左右 / 點擊畫面 / 手機觸控
+                </p>
+            </div>
+            <button onclick="startGame()">開始過馬路</button>
+        </div>
+
+        <div id="mobile-controls">
+            <div class="d-pad">
+                <div class="btn btn-up" ontouchstart="keys['ArrowUp']=true" ontouchend="keys['ArrowUp']=false"></div>
+                <div class="btn btn-down" ontouchstart="keys['ArrowDown']=true" ontouchend="keys['ArrowDown']=false"></div>
+                <div class="btn btn-left" ontouchstart="keys['ArrowLeft']=true" ontouchend="keys['ArrowLeft']=false"></div>
+                <div class="btn btn-right" ontouchstart="keys['ArrowRight']=true" ontouchend="keys['ArrowRight']=false"></div>
+            </div>
+        </div>
+    </div>
+
+    <p class="info-text" style="margin-top:10px; font-size:14px; color:#888;">
+        * 此模擬器參考台灣實際路況：綠燈時行人仍需閃避轉彎車輛。
+    </p>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // DOM 元素
+    const signalBox = document.getElementById('signal-box');
+    const timerEl = document.getElementById('timer');
+    const warningText = document.getElementById('warning-text');
+    const modal = document.getElementById('menu-modal');
+    const menuTitle = document.getElementById('menu-title');
+    const menuContent = document.getElementById('menu-content');
+
+    // 遊戲參數設定
+    const GAME_WIDTH = 600;
+    const GAME_HEIGHT = 600;
+    const LANE_HEIGHT = 100;
+    const PLAYER_SIZE = 14; // 兒童體積小
+    
+    // 擬真參數：兒童步行速度約 0.9m/s，成人約 1.4m/s
+    // 在此遊戲比例尺中，車速約 4-8 px/frame，兒童設為 1.2 px/frame
+    const PLAYER_SPEED = 1.2; 
+
+    // 狀態管理
+    let gameState = 'MENU'; // MENU, PLAYING, GAMEOVER, WIN
+    let frames = 0;
+    let score = 0;
+    let animationId;
+    
+    // 號誌系統
+    let lightState = 'RED'; // RED, GREEN, YELLOW
+    let lightTimer = 0; // 倒數計時
+    const RED_DURATION = 180; // 3秒 (60fps) - 簡化等待時間
+    const GREEN_DURATION = 1200; // 20秒 - 模擬真實過馬路時間壓力
+    const YELLOW_DURATION = 180; // 3秒
+
+    // 物件定義
+    let player = { x: 300, y: 580, width: PLAYER_SIZE, height: PLAYER_SIZE, color: '#03a9f4' };
+    let vehicles = [];
+    let particles = []; // 碰撞特效
+
+    // 車種資料庫 (台灣常見車種)
+    const VEHICLE_TYPES = {
+        SCOOTER: { w: 20, h: 40, color: '#ffeb3b', speedBase: 6, name: '機車 (鑽車縫)' },
+        SEDAN:   { w: 40, h: 70, color: '#e0e0e0', speedBase: 4, name: '轎車' },
+        SUV:     { w: 45, h: 80, color: '#546e7a', speedBase: 4.5, name: '休旅車 (A柱死角)' },
+        BUS:     { w: 55, h: 130, color: '#66bb6a', speedBase: 3, name: '公車 (內輪差)' },
+        TRUCK:   { w: 55, h: 110, color: '#8d6e63', speedBase: 3.5, name: '貨車' }
+    };
+
+    // 輸入控制
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+    
+    // 滑鼠點擊移動 (輔助)
+    canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+        // 簡單的點擊導航邏輯
+        if(clickY < player.y) keys['ArrowUp'] = true;
+        if(clickY > player.y) keys['ArrowDown'] = true;
+        if(clickX < player.x) keys['ArrowLeft'] = true;
+        if(clickX > player.x) keys['ArrowRight'] = true;
+        
+        setTimeout(() => {
+            keys['ArrowUp'] = false; keys['ArrowDown'] = false;
+            keys['ArrowLeft'] = false; keys['ArrowRight'] = false;
+        }, 200);
+    });
+
+    function startGame() {
+        gameState = 'PLAYING';
+        modal.style.display = 'none';
+        resetGame();
+        loop();
+    }
+
+    function resetGame() {
+        player.x = GAME_WIDTH / 2;
+        player.y = 580;
+        vehicles = [];
+        particles = [];
+        frames = 0;
+        lightState = 'RED';
+        lightTimer = RED_DURATION;
+        keys['ArrowUp'] = false; keys['ArrowDown'] = false;
+        keys['ArrowLeft'] = false; keys['ArrowRight'] = false;
+        
+        // 初始生成一些橫向車流
+        for(let i=0; i<8; i++) spawnHorizontalTraffic(true);
+    }
+
+    // 核心生成邏輯：模擬台灣交通
+    function spawnManager() {
+        // 1. 紅燈時：橫向高速車流 (絕對死區)
+        if (lightState === 'RED') {
+            if (frames % 15 === 0) spawnHorizontalTraffic();
+        }
+        
+        // 2. 綠燈時：縱向/轉彎車流 (這才是遊戲重點)
+        // 在台灣，綠燈時行人要面對「左轉車」和「右轉車」
+        if (lightState === 'GREEN' || lightState === 'YELLOW') {
+            // 降低生成頻率，但增加致命性 (轉彎)
+            // 頻率隨時間增加，模擬紅綠燈快結束時車子搶快
+            let rate = 50;
+            if (lightState === 'YELLOW') rate = 20; // 黃燈搶快
+
+            if (frames % rate === 0) {
+                spawnTurningTraffic();
+            }
+        }
+    }
+
+    function spawnHorizontalTraffic(isInit = false) {
+        // 0-3 是車道 ID (0,1 向右, 2,3 向左)
+        let lane = Math.floor(Math.random() * 4);
+        let yPos = 100 + lane * 100 + 50; // 車道中心
+        let dir = (lane < 2) ? 1 : -1;
+        
+        // 隨機車種
+        let typeKey = Math.random() > 0.3 ? (Math.random() > 0.5 ? 'SCOOTER' : 'SEDAN') : 'BUS';
+        if (Math.random() > 0.8) typeKey = 'SUV';
+        
+        let type = VEHICLE_TYPES[typeKey];
+        let xPos = (dir === 1) ? -100 : GAME_WIDTH + 100;
+        
+        if (isInit) xPos = Math.random() * GAME_WIDTH;
+
+        vehicles.push({
+            x: xPos,
+            y: yPos,
+            vx: type.speedBase * dir * (Math.random() * 0.4 + 0.8), // 速度浮動
+            vy: 0,
+            w: type.h, // 橫向時，長寬互換
+            h: type.w,
+            color: type.color,
+            type: typeKey,
+            angle: (dir === 1) ? 0 : Math.PI
+        });
+    }
+
+    function spawnTurningTraffic() {
+        // 模擬轉彎車：從畫面上方或下方進入，目標是切過斑馬線
+        // 左轉車最危險
+        let startTop = Math.random() > 0.5; // true: 從上方下來, false: 從下方上去
+        let startX = Math.random() * GAME_WIDTH;
+        
+        // 設定目標點：玩家附近的區域 (模擬駕駛沒看到小孩)
+        // 加上隨機偏移
+        let targetX = player.x + (Math.random() * 200 - 100); 
+        let targetY = player.y;
+
+        let typeKey = Math.random() > 0.5 ? 'SUV' : (Math.random() > 0.5 ? 'SCOOTER' : 'BUS');
+        let type = VEHICLE_TYPES[typeKey];
+        
+        // 計算向量
+        let dx = targetX - startX;
+        let dy = targetY - (startTop ? -50 : GAME_HEIGHT + 50);
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        
+        let speed = type.speedBase * 0.7; // 轉彎速度稍慢
+        
+        vehicles.push({
+            x: startX,
+            y: startTop ? -80 : GAME_HEIGHT + 80,
+            vx: (dx / dist) * speed,
+            vy: (dy / dist) * speed,
+            w: type.w,
+            h: type.h,
+            color: type.color,
+            type: typeKey,
+            angle: Math.atan2(dy, dx) + Math.PI/2 // 車頭朝向
+        });
+    }
+
+    function update() {
+        // 更新號誌
+        lightTimer--;
+        if (lightTimer <= 0) {
+            if (lightState === 'RED') {
+                lightState = 'GREEN';
+                lightTimer = GREEN_DURATION;
+                signalBox.className = 'light-signal green-light';
+                signalBox.innerText = '🟢 綠燈 (小心轉彎車)';
+                warningText.style.display = 'block';
+            } else if (lightState === 'GREEN') {
+                lightState = 'YELLOW';
+                lightTimer = YELLOW_DURATION;
+                signalBox.className = 'light-signal yellow-light';
+                signalBox.innerText = '🟡 黃燈 (快跑!)';
+                warningText.style.display = 'none';
+            } else {
+                lightState = 'RED';
+                lightTimer = RED_DURATION;
+                signalBox.className = 'light-signal red-light';
+                signalBox.innerText = '🔴 紅燈 (停)';
+            }
+        }
+        
+        // 顯示倒數
+        timerEl.innerText = Math.ceil(lightTimer / 60);
+
+        // 玩家移動
+        if (keys['ArrowUp']) player.y -= PLAYER_SPEED;
+        if (keys['ArrowDown']) player.y += PLAYER_SPEED;
+        if (keys['ArrowLeft']) player.x -= PLAYER_SPEED;
+        if (keys['ArrowRight']) player.x += PLAYER_SPEED;
+
+        // 邊界限制
+        if (player.x < 0) player.x = 0;
+        if (player.x > GAME_WIDTH) player.x = GAME_WIDTH;
+        if (player.y > 600) player.y = 600;
+
+        // 勝利條件：到達對面
+        if (player.y < 50) {
+            gameOver(true);
+            return;
+        }
+
+        // 車輛更新
+        spawnManager();
+        
+        for (let i = vehicles.length - 1; i >= 0; i--) {
+            let v = vehicles[i];
+            v.x += v.vx;
+            v.y += v.vy;
+
+            // 移除出界車輛
+            if (v.x < -150 || v.x > GAME_WIDTH + 150 || v.y < -150 || v.y > GAME_HEIGHT + 150) {
+                vehicles.splice(i, 1);
+                continue;
+            }
+
+            // 碰撞偵測 (簡單 AABB 加上一點寬容度，因為車子有旋轉)
+            // 這裡為了簡單使用矩形距離，實際上轉彎車有角度，但對小孩來說碰撞就是碰撞
+            let hitDist = (v.w + v.h) / 4 + PLAYER_SIZE; // 粗略半徑
+            let dist = Math.hypot(player.x - v.x, player.y - v.y);
+            
+            if (dist < hitDist) {
+                createExplosion(player.x, player.y);
+                gameOver(false, VEHICLE_TYPES[v.type].name);
+                return;
+            }
+        }
+        
+        // 粒子更新
+        particles.forEach((p, i) => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life--;
+            if(p.life <= 0) particles.splice(i, 1);
+        });
+    }
+
+    function draw() {
+        // 清空畫布
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+        // 畫斑馬線 (縱向)
+        ctx.fillStyle = '#eee';
+        for (let i = 50; i < GAME_WIDTH; i += 60) {
+            ctx.fillRect(i, 50, 30, 500);
+        }
+        
+        // 畫分隔島/車道線 (橫向)
+        ctx.fillStyle = '#ffeb3b'; // 黃線
+        ctx.fillRect(0, 300 - 2, GAME_WIDTH, 4);
+        ctx.fillStyle = '#fff'; // 白虛線
+        for(let y of [200, 400]) {
+            for(let x=0; x<GAME_WIDTH; x+=40) {
+                ctx.fillRect(x, y, 20, 2);
+            }
+        }
+
+        // 畫車輛
+        vehicles.forEach(v => {
+            ctx.save();
+            ctx.translate(v.x, v.y);
+            ctx.rotate(v.angle);
+            
+            // 車身
+            ctx.fillStyle = v.color;
+            // 陰影
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 10;
+            // 繪製矩形 (中心點)
+            ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
+            
+            // 車燈 (如果是晚上或為了效果)
+            ctx.fillStyle = 'yellow';
+            ctx.fillRect(-v.w/2 + 2, v.h/2 - 5, 5, 5); // 頭燈
+            ctx.fillRect(v.w/2 - 7, v.h/2 - 5, 5, 5);
+            
+            // 煞車燈
+            ctx.fillStyle = 'red';
+            ctx.fillRect(-v.w/2 + 2, -v.h/2, 5, 5); 
+            ctx.fillRect(v.w/2 - 7, -v.h/2, 5, 5);
+
+            ctx.restore();
+        });
+
+        // 畫玩家 (小孩)
+        ctx.save();
+        ctx.shadowColor = 'black';
+        ctx.shadowBlur = 5;
+        ctx.fillStyle = player.color;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, PLAYER_SIZE, 0, Math.PI * 2);
+        ctx.fill();
+        // 背包 (增加小孩特徵)
+        ctx.fillStyle = '#ff9800';
+        ctx.beginPath();
+        ctx.arc(player.x, player.y - 5, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        
+        // 畫粒子
+        particles.forEach(p => {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, 3, 3);
+        });
+    }
+
+    function createExplosion(x, y) {
+        for(let i=0; i<20; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10,
+                life: 30,
+                color: 'red'
+            });
+        }
+    }
+
+    function gameOver(isWin, killer = '') {
+        gameState = isWin ? 'WIN' : 'GAMEOVER';
+        cancelAnimationFrame(animationId);
+        
+        modal.style.display = 'block';
+        
+        if (isWin) {
+            menuTitle.innerText = "🎉 安全抵達";
+            menuContent.innerHTML = `<p>你成功過馬路了！<br>但在真實世界，你可能因為身高太矮，<br>駕駛剛才根本沒看到你。</p>`;
+        } else {
+            menuTitle.innerText = "💥 發生事故";
+            menuContent.innerHTML = `<p>你被 <b>${killer}</b> 撞上了。</p>
+            <p style="color:#ff9999">
+                原因分析：<br>
+                1. 小孩視野低，看不到遠處來車。<br>
+                2. 小孩移動慢，無法快速閃避。<br>
+                3. 台灣駕駛習慣切西瓜或搶快。
+            </p>`;
+        }
+    }
+
+    function loop() {
+        if (gameState !== 'PLAYING') return;
+        
+        frames++;
+        update();
+        draw();
+        animationId = requestAnimationFrame(loop);
+    }
+
+    // 初始畫面
+    draw();
+
+</script>
+</body>
+</html>
